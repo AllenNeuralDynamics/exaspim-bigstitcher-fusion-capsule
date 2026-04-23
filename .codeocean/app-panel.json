@@ -1,0 +1,39 @@
+{
+	"version": 1,
+	"named_parameters": true,
+	"parameters": [
+		{
+			"id": "mEefi6F8r1CHQV38",
+			"name": "s3-xml-path",
+			"param_name": "s3-xml-path",
+			"type": "text",
+			"value_type": "string",
+			"required": true
+		},
+		{
+			"id": "WrkEU9tRBvnBbBDV",
+			"name": "zarr-location",
+			"param_name": "zarr-location",
+			"type": "text",
+			"value_type": "string",
+			"required": true
+		},
+		{
+			"id": "oDlHGmAfvc4bUc5C",
+			"name": "s3-jar-path",
+			"param_name": "spark-jar",
+			"type": "text",
+			"value_type": "string",
+			"required": true
+		},
+		{
+			"id": "jR78z4DfPmQCUIO9",
+			"name": "fusion-mode",
+			"param_name": "fusion-mode",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "AVG_BLEND",
+			"required": true
+		}
+	]
+}

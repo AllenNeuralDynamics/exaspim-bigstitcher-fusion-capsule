@@ -190,6 +190,8 @@ if [[ -z "$local_spark_jar" ]]; then
   local_spark_jar="/scratch/$spark_jar_basename"
 fi
 
+run_start_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
 set -x
 
 log_file=/results/emr_affine_fusion.txt
@@ -227,3 +229,41 @@ python "$script_dir/emr-fusion-job.py" "$zarr_location" --spark-jar "$spark_jar"
 
 # Patch OME-Zarr metadata
 python "$script_dir/fix-fused-scale.py" "$zarr_location"
+
+run_end_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+metadata_file=/results/processing.json
+metadata_cmd=(
+  python "$script_dir/generate-processing-metadata.py"
+  --s3-xml-path "$s3_xml_path"
+  --zarr-location "$zarr_location"
+  --spark-jar "$spark_jar"
+  --local-spark-jar "$local_spark_jar"
+  --block-size "$block_size"
+  --compression "$compression"
+  --data-type "$data_type"
+  --storage-format "$storage_format"
+  --s3-region "$s3_region"
+  --start-date-time "$run_start_time"
+  --end-date-time "$run_end_time"
+  --output-file "$metadata_file"
+)
+
+for downsample in "${downsamples[@]}"; do
+  metadata_cmd+=(--downsample "$downsample")
+done
+
+for emr_arg in "${emr_args[@]}"; do
+  metadata_cmd+=(--emr-arg="$emr_arg")
+done
+
+"${metadata_cmd[@]}"
+
+zarr_location_trimmed="${zarr_location%/}"
+if [[ "$zarr_location_trimmed" == s3://* ]]; then
+  metadata_destination="${zarr_location_trimmed%/*}/processing.json"
+  aws s3 cp "$metadata_file" "$metadata_destination"
+else
+  metadata_destination="$(dirname "$zarr_location_trimmed")/processing.json"
+  mkdir -p "$(dirname "$metadata_destination")"
+  cp "$metadata_file" "$metadata_destination"
+fi

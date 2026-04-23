@@ -37,7 +37,8 @@ RUN pip3 install -U --no-cache-dir \
     xarray-multiscale==1.2.0 \
     s3fs==2025.7.0 \
     dask==2025.12.0 \ 
-    boto3
+    boto3 \
+    aind-data-schema==2.6.0
 
 ADD "https://github.com/coder/code-server/releases/download/v4.116.0/code-server-4.116.0-linux-amd64.tar.gz" /.code-server/code-server.tar.gz
 

@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  run --s3-xml-path S3_URI --zarr-location URI --spark-jar S3_URI [options] [emr-fusion-job.py options]
+
+Container options:
+  --s3-xml-path S3_URI      Required fusion XML input path.
+  --zarr-location URI       Required output Zarr location.
+  --spark-jar S3_URI        Required Spark jar S3 URI for local and EMR fusion.
+  --local-spark-jar PATH    Local cache path for the downloaded Spark jar.
+  --block-size VALUE        Fusion container block size.
+  --compression VALUE       Fusion container compression.
+  --data-type VALUE         Fusion container data type.
+  --storage-format VALUE    Storage format for container and EMR fusion.
+  --downsample VALUE        Downsample level. Repeat to replace defaults.
+  --s3-region VALUE         S3 region for container and EMR fusion.
+
+All other options are forwarded to emr-fusion-job.py.
+EOF
+}
+
+if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+# 0) Parse manifest for fusion inputs.
+s3_xml_path=
+zarr_location=
+spark_jar=
+local_spark_jar=
+block_size=256,256,128
+compression=Blosc
+data_type=UINT16
+storage_format=ZARR
+s3_region=us-west-2
+default_downsamples=(
+  1,1,1
+  2,2,2
+  4,4,4
+  8,8,8
+  16,16,16
+  32,32,32
+  64,64,64
+)
+downsamples=()
+emr_args=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --s3-xml-path)
+      s3_xml_path="$2"
+      shift 2
+      ;;
+    --s3-xml-path=*)
+      s3_xml_path="${1#*=}"
+      shift
+      ;;
+    --zarr-location)
+      zarr_location="$2"
+      shift 2
+      ;;
+    --zarr-location=*)
+      zarr_location="${1#*=}"
+      shift
+      ;;
+    --spark-jar)
+      spark_jar="$2"
+      shift 2
+      ;;
+    --spark-jar=*)
+      spark_jar="${1#*=}"
+      shift
+      ;;
+    --local-spark-jar)
+      local_spark_jar="$2"
+      shift 2
+      ;;
+    --local-spark-jar=*)
+      local_spark_jar="${1#*=}"
+      shift
+      ;;
+    --block-size)
+      block_size="$2"
+      shift 2
+      ;;
+    --block-size=*)
+      block_size="${1#*=}"
+      shift
+      ;;
+    --compression)
+      compression="$2"
+      shift 2
+      ;;
+    --compression=*)
+      compression="${1#*=}"
+      shift
+      ;;
+    --data-type)
+      data_type="$2"
+      shift 2
+      ;;
+    --data-type=*)
+      data_type="${1#*=}"
+      shift
+      ;;
+    --storage-format)
+      storage_format="$2"
+      emr_args+=("--storage-format" "$2")
+      shift 2
+      ;;
+    --storage-format=*)
+      storage_format="${1#*=}"
+      emr_args+=("--storage-format" "$storage_format")
+      shift
+      ;;
+    --downsample)
+      downsamples+=("$2")
+      shift 2
+      ;;
+    --downsample=*)
+      downsamples+=("${1#*=}")
+      shift
+      ;;
+    --s3-region)
+      s3_region="$2"
+      emr_args+=("--s3-region" "$2")
+      shift 2
+      ;;
+    --s3-region=*)
+      s3_region="${1#*=}"
+      emr_args+=("--s3-region" "$s3_region")
+      shift
+      ;;
+    --)
+      shift
+      emr_args+=("$@")
+      break
+      ;;
+    *)
+      emr_args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ ${#downsamples[@]} -eq 0 ]]; then
+  downsamples=("${default_downsamples[@]}")
+fi
+
+if [[ -z "$s3_xml_path" ]]; then
+  echo "ERROR: --s3-xml-path is required" >&2
+  usage >&2
+  exit 2
+fi
+
+if [[ -z "$zarr_location" ]]; then
+  echo "ERROR: --zarr-location is required" >&2
+  usage >&2
+  exit 2
+fi
+
+if [[ -z "$spark_jar" ]]; then
+  echo "ERROR: --spark-jar is required" >&2
+  usage >&2
+  exit 2
+fi
+
+if [[ "$spark_jar" != s3://* ]]; then
+  echo "ERROR: --spark-jar must be an s3:// URI" >&2
+  exit 2
+fi
+
+spark_jar_basename="${spark_jar##*/}"
+if [[ -z "$spark_jar_basename" ]]; then
+  echo "ERROR: Could not determine jar filename from --spark-jar: $spark_jar" >&2
+  exit 2
+fi
+
+if [[ -z "$local_spark_jar" ]]; then
+  local_spark_jar="/scratch/$spark_jar_basename"
+fi
+
+set -x
+
+log_file=/results/emr_affine_fusion.txt
+echo "s3_xml_path=${s3_xml_path}" >> "$log_file"
+echo "zarr_location=${zarr_location}" >> "$log_file"
+echo "spark_jar=${spark_jar}" >> "$log_file"
+echo "local_spark_jar=${local_spark_jar}" >> "$log_file"
+echo "emr_args=${emr_args[*]}" >> "$log_file"
+
+mkdir -p "$(dirname "$local_spark_jar")"
+if [[ ! -s "$local_spark_jar" ]]; then
+  aws s3 cp "$spark_jar" "$local_spark_jar"
+fi
+
+container_cmd=(
+  bash "$script_dir/create-fusion-container"
+  --jar "$local_spark_jar"
+  -x "$s3_xml_path"
+  -o "$zarr_location"
+  -d "$data_type"
+  -s "$storage_format"
+  --blockSize "$block_size"
+  --compression "$compression"
+)
+
+for downsample in "${downsamples[@]}"; do
+  container_cmd+=(-ds "$downsample")
+done
+
+container_cmd+=(--s3Region "$s3_region")
+
+"${container_cmd[@]}"
+
+python "$script_dir/emr-fusion-job.py" "$zarr_location" --spark-jar "$spark_jar" "${emr_args[@]}"
+
+# Patch OME-Zarr metadata
+python "$script_dir/fix-fused-scale.py" "$zarr_location"

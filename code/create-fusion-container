@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+jar=
+args=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --jar)
+      jar="$2"
+      shift 2
+      ;;
+    --jar=*)
+      jar="${1#*=}"
+      shift
+      ;;
+    --)
+      shift
+      args+=("$@")
+      break
+      ;;
+    *)
+      args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$jar" ]]; then
+  echo "ERROR: --jar is required" >&2
+  exit 2
+fi
+
+java \
+  -Xmx12g -Dspark.master=local[2] -Djava.awt.headless=true \
+  -cp "$jar" \
+  net.preibisch.bigstitcher.spark.CreateFusionContainer "${args[@]}"

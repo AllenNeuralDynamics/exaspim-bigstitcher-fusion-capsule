@@ -1,4 +1,5 @@
 metadata_version: 1
 name: Exaspim Launch EMR Fusion
+description: Capsule to launch exaSPIM fusion jobs on AWS EMR
 authors:
 - name: Cameron Arshadi
